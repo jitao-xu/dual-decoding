@@ -6,4 +6,8 @@ Source code of paper:
 
 Jitao Xu and François Yvon
 
-# 
+## Installation
+
+Same as standard `fairseq`, please refer to the [installation instruction](https://github.com/jitao-xu/dual-decoding/tree/main/fairseq#requirements-and-installation) in the `fairseq` directory.
+
+## Data Preprocessing
