@@ -164,12 +164,17 @@ Our code was modified from [fairseq](https://github.com/pytorch/fairseq) codebas
 ## Citation
 
 ```
-@misc{xu2021source,
-      title={One Source, Two Targets: Challenges and Rewards of Dual Decoding}, 
-      author={Jitao Xu and François Yvon},
-      year={2021},
-      eprint={2109.10197},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL}
+@inproceedings{xu-yvon-2021-one,
+    title = "One Source, Two Targets: {C}hallenges and Rewards of Dual Decoding",
+    author = "Xu, Jitao  and
+      Yvon, Fran{\c{c}}ois",
+    booktitle = "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing",
+    month = nov,
+    year = "2021",
+    address = "Online and Punta Cana, Dominican Republic",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2021.emnlp-main.671",
+    pages = "8533--8546",
+    abstract = "Machine translation is generally understood as generating one target text from an input source document. In this paper, we consider a stronger requirement: to jointly generate two texts so that each output side effectively depends on the other. As we discuss, such a device serves several practical purposes, from multi-target machine translation to the generation of controlled variations of the target text. We present an analysis of possible implementations of dual decoding, and experiment with four applications. Viewing the problem from multiple angles allows us to better highlight the challenges of dual decoding and to also thoroughly analyze the benefits of generating matched, rather than independent, translations.",
 }
 ```
