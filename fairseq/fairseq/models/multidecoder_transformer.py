@@ -156,11 +156,15 @@ class MultidecoderTransformerModel(MultiDecoderModel):
         parser.add_argument('--share-all-embeddings', action='store_true',
                             help='share encoder, decoder and output embeddings'
                                  ' (requires shared dictionary and embed dim)')
+        parser.add_argument('--share-decoders', action='store_true',
+                            help='share both decoders with one set of parameter')
 
         parser.add_argument('--load-pretrained-encoder-from', type=str, metavar="CHECKPOINT",
-                            help='share decoder input and output embeddings')
+                            help='load pre-trained encoder from model')
         parser.add_argument('--load-pretrained-decoder-from', type=str, metavar="CHECKPOINT",
-                            help='share decoder input and output embeddings')
+                            help='load pre-trained decoder from model')
+        parser.add_argument('--load-only-decoder', type=int, metavar="CHECKPOINT",
+                            help='load pre-trained decoder for only one decoder')
 
         parser.add_argument('--no-token-positional-embeddings', default=False, action='store_true',
                             help='if set, disables positional embeddings (outside self attention)')
@@ -266,8 +270,22 @@ class MultidecoderTransformerModel(MultiDecoderModel):
 
         encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
         decoders = OrderedDict()
-        for lang in tgt_langs:
-            decoders[lang] = cls.build_decoder(args, tgt_dicts[lang], decoder_embed_tokens[lang])
+        if getattr(args, "load_pretrained_decoder_from", None) is None:
+            loading = [False, False]
+        else:
+            loading = [True, True]
+        if getattr(args, "load_only_decoder", None):
+            if args.load_only_decoder == 1:
+                loading[1] = False
+            elif args.load_only_decoder == 2:
+                loading[0] = False
+        if args.share_decoders:
+            decoder = cls.build_decoder(args, tgt_dicts[lang], decoder_embed_tokens[lang], loading[lang])
+            for lang in tgt_langs:
+                decoders[lang] = decoder
+        else:
+            for lang in tgt_langs:
+                decoders[lang] = cls.build_decoder(args, tgt_dicts[lang], decoder_embed_tokens[lang], loading[lang])
 
         return cls(args, encoder, decoders)
 
@@ -293,14 +311,14 @@ class MultidecoderTransformerModel(MultiDecoderModel):
         return encoder
 
     @classmethod
-    def build_decoder(cls, args, tgt_dict, embed_tokens):
+    def build_decoder(cls, args, tgt_dict, embed_tokens, load_pretrain):
         decoder = TransformerDecoder(
             args,
             tgt_dict,
             embed_tokens,
             no_encoder_attn=getattr(args, "no_cross_attention", False),
         )
-        if getattr(args, "load_pretrained_decoder_from", None):
+        if getattr(args, "load_pretrained_decoder_from", None) and load_pretrain:
             decoder = checkpoint_utils.load_pretrained_component_from_model(
                 component=decoder, checkpoint=args.load_pretrained_decoder_from
             )
@@ -400,8 +418,7 @@ def base_architecture(args):
     )
     args.share_all_decoder_embed = getattr(args, "share_all_decoder_embed", False)
     args.share_all_embeddings = getattr(args, "share_all_embeddings", False)
-    args.load_pretrained_encoder_from = getattr(args, "load_pretrained_encoder_from", None)
-    args.load_pretrained_decoder_from = getattr(args, "load_pretrained_decoder_from", None)
+    args.share_decoders = getattr(args, "share_decoders", False)
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", False
     )

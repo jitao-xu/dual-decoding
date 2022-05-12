@@ -625,7 +625,7 @@ def load_pretrained_component_from_model(
         )
     component_state_dict = OrderedDict()
     logger.info(
-        f"loading pretrained {component_type} from {checkpoint}: "
+        f"loading pretrained {component_type} from {checkpoint} "
     )
     for key in state["model"].keys():
         if key.startswith(component_type):

@@ -114,6 +114,8 @@ class SynchronousTransformerModel(FairseqEncoderDecoderModel):
         parser.add_argument('--share-all-embeddings', action='store_true',
                             help='share encoder, decoder and output embeddings'
                                  ' (requires shared dictionary and embed dim)')
+        parser.add_argument('--share-decoders', action='store_true',
+                            help='share both decoders with one set of parameter')
         parser.add_argument('--no-token-positional-embeddings', default=False, action='store_true',
                             help='if set, disables positional embeddings (outside self attention)')
         parser.add_argument('--adaptive-softmax-cutoff', metavar='EXPR',
@@ -130,9 +132,11 @@ class SynchronousTransformerModel(FairseqEncoderDecoderModel):
                                  'memory usage at the cost of some additional compute')
 
         parser.add_argument('--load-pretrained-encoder-from', type=str, metavar="CHECKPOINT",
-                            help='share decoder input and output embeddings')
+                            help='load pre-trained encoder from model')
         parser.add_argument('--load-pretrained-decoder-from', type=str, metavar="CHECKPOINT",
-                            help='share decoder input and output embeddings')
+                            help='load pre-trained decoder from model')
+        parser.add_argument('--load-only-decoder', type=int, metavar="CHECKPOINT",
+                            help='load pre-trained decoder for only one decoder')
 
         # args for mutual attention
         parser.add_argument('--no-mutual-attention', default=False, action='store_true',
@@ -234,7 +238,16 @@ class SynchronousTransformerModel(FairseqEncoderDecoderModel):
             ])
 
         encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
-        decoder = cls.build_decoder(args, tgt_dicts, decoder_embed_tokens)
+        if getattr(args, "load_pretrained_decoder_from", None) is None:
+            loading = [False, False]
+        else:
+            loading = [True, True]
+        if getattr(args, "load_only_decoder", None):
+            if args.load_only_decoder == 1:
+                loading[1] = False
+            elif args.load_only_decoder == 2:
+                loading[0] = False
+        decoder = cls.build_decoder(args, tgt_dicts, decoder_embed_tokens, loading)
         # decoders = OrderedDict()
         # for lang in tgt_langs:
             # decoders[lang] = cls.build_decoder(args, tgt_dicts[lang], decoder_embed_tokens[lang])
@@ -263,7 +276,7 @@ class SynchronousTransformerModel(FairseqEncoderDecoderModel):
         return encoder
 
     @classmethod
-    def build_decoder(cls, args, tgt_dicts, embed_tokens):
+    def build_decoder(cls, args, tgt_dicts, embed_tokens, loading):
         decoder = TransformerMutualAttentionDecoder(
             args,
             tgt_dicts,
@@ -273,7 +286,9 @@ class SynchronousTransformerModel(FairseqEncoderDecoderModel):
         )
         if getattr(args, "load_pretrained_decoder_from", None):
             decoder = load_pretrained_component_from_model(
-                component=decoder, checkpoint=args.load_pretrained_decoder_from
+                component=decoder, 
+                checkpoint=args.load_pretrained_decoder_from,
+                loading=loading,
             )
         return decoder
 
@@ -392,6 +407,7 @@ class TransformerMutualAttentionDecoder(FairseqDecoder):
         self.decoder_layerdrop = args.decoder_layerdrop
         self.share_input_output_embed = args.share_decoder_input_output_embed
         self.share_all_decoder_embed = args.share_all_decoder_embed
+        self.share_decoders = args.share_decoders
 
         assert embed_tokens[0].embedding_dim == embed_tokens[1].embedding_dim
         input_embed_dim = embed_tokens[0].embedding_dim
@@ -421,11 +437,14 @@ class TransformerMutualAttentionDecoder(FairseqDecoder):
             if embed_dim != input_embed_dim
             else None
         )
-        self.project_in_dim2 = (
-            Linear(input_embed_dim, embed_dim, bias=False)
-            if embed_dim != input_embed_dim
-            else None
-        )
+        if self.share_decoders:
+            self.project_in_dim2 = self.project_in_dim1
+        else:
+            self.project_in_dim2 = (
+                Linear(input_embed_dim, embed_dim, bias=False)
+                if embed_dim != input_embed_dim
+                else None
+            )
         self.embed_positions1 = (
             PositionalEmbedding(
                 self.max_target_positions,
@@ -436,20 +455,26 @@ class TransformerMutualAttentionDecoder(FairseqDecoder):
             if not args.no_token_positional_embeddings
             else None
         )
-        self.embed_positions2 = (
-            PositionalEmbedding(
-                self.max_target_positions,
-                embed_dim,
-                self.padding_idx,
-                learned=args.decoder_learned_pos,
+        if self.share_decoders:
+            self.embed_positions2 = self.embed_positions1
+        else:
+            self.embed_positions2 = (
+                PositionalEmbedding(
+                    self.max_target_positions,
+                    embed_dim,
+                    self.padding_idx,
+                    learned=args.decoder_learned_pos,
+                )
+                if not args.no_token_positional_embeddings
+                else None
             )
-            if not args.no_token_positional_embeddings
-            else None
-        )
 
         if getattr(args, "layernorm_embedding", False):
             self.layernorm_embedding1 = LayerNorm(embed_dim)
-            self.layernorm_embedding2 = LayerNorm(embed_dim)
+            if self.share_decoders:
+                self.layernorm_embedding2 = self.layernorm_embedding1
+            else:
+                self.layernorm_embedding2 = LayerNorm(embed_dim)
         else:
             self.layernorm_embedding1 = None
             self.layernorm_embedding2 = None
@@ -472,7 +497,10 @@ class TransformerMutualAttentionDecoder(FairseqDecoder):
             args, "no_decoder_final_norm", False
         ):
             self.layer_norm1 = LayerNorm(embed_dim)
-            self.layer_norm2 = LayerNorm(embed_dim)
+            if self.share_decoders:
+                self.layer_norm2 = self.layer_norm1
+            else:
+                self.layer_norm2 = LayerNorm(embed_dim)
         else:
             self.layer_norm1 = None
             self.layer_norm2 = None
@@ -482,11 +510,14 @@ class TransformerMutualAttentionDecoder(FairseqDecoder):
             if embed_dim != self.output_embed_dim and not args.tie_adaptive_weights
             else None
         )
-        self.project_out_dim2 = (
-            Linear(embed_dim, self.output_embed_dim, bias=False)
-            if embed_dim != self.output_embed_dim and not args.tie_adaptive_weights
-            else None
-        )
+        if self.share_decoders:
+            self.project_out_dim2 = self.project_out_dim1
+        else:
+            self.project_out_dim2 = (
+                Linear(embed_dim, self.output_embed_dim, bias=False)
+                if embed_dim != self.output_embed_dim and not args.tie_adaptive_weights
+                else None
+            )
 
         self.adaptive_softmax = None
         self.output_projection1 = None
@@ -888,7 +919,7 @@ class TransformerMutualAttentionDecoder(FairseqDecoder):
 
 
 def load_pretrained_component_from_model(
-    component: Union[FairseqEncoder, FairseqDecoder], checkpoint: str
+    component: Union[FairseqEncoder, FairseqDecoder], checkpoint: str, loading: List = None
 ):
     """
     Load a pretrained FairseqEncoder or FairseqDecoder from checkpoint into the
@@ -910,8 +941,12 @@ def load_pretrained_component_from_model(
         )
     component_state_dict = OrderedDict()
     logger.info(
-        f"loading pretrained {component_type} from {checkpoint}: "
+        f"loading pretrained {component_type} from {checkpoint} "
     )
+    if loading:
+        logger.info(
+            f"loading for decoder 1: {loading[0]} and decoder 2: {loading[1]}"
+        )
     for key in state["model"].keys():
         if key.startswith(component_type):
             # encoder.input_layers.0.0.weight --> input_layers.0.0.weight
@@ -941,8 +976,10 @@ def load_pretrained_component_from_model(
                 else:
                     component_subkey1 = component_subkey2 = None
                 if component_subkey1 is not None and component_subkey2 is not None:
-                    component_state_dict[component_subkey1] = state["model"][key]
-                    component_state_dict[component_subkey2] = state["model"][key]
+                    if loading[0]:
+                        component_state_dict[component_subkey1] = state["model"][key]
+                    if loading[1]:
+                        component_state_dict[component_subkey2] = state["model"][key]
                 else:
                     component_state_dict[component_subkey] = state["model"][key]
             else:
@@ -983,6 +1020,7 @@ def base_architecture(args):
     )
     args.share_all_decoder_embed = getattr(args, "share_all_decoder_embed", False)
     args.share_all_embeddings = getattr(args, "share_all_embeddings", False)
+    args.share_decoders = getattr(args, "share_decoders", False)
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", False
     )

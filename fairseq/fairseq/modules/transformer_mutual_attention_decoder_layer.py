@@ -47,6 +47,7 @@ class TransformerMutualAttentionDecoderLayer(nn.Module):
         self.quant_noise_block_size = getattr(args, "quant_noise_pq_block_size", 8)
 
         self.cross_self_attention = getattr(args, "cross_self_attention", False)
+        self.share_decoders = args.share_decoders
         
         self.beam_size = getattr(args, "beam", 5)
         self.decoding_method = getattr(args, "decoding_method", None)
@@ -57,12 +58,15 @@ class TransformerMutualAttentionDecoderLayer(nn.Module):
             add_bias_kv=add_bias_kv,
             add_zero_attn=add_zero_attn,
         )
-        self.self_attn2 = self.build_self_attention(
-            self.embed_dim,
-            args,
-            add_bias_kv=add_bias_kv,
-            add_zero_attn=add_zero_attn,
-        )
+        if self.share_decoders:
+            self.self_attn2 = self.self_attn1
+        else:
+            self.self_attn2 = self.build_self_attention(
+                self.embed_dim,
+                args,
+                add_bias_kv=add_bias_kv,
+                add_zero_attn=add_zero_attn,
+            )
 
         self.activation_fn = utils.get_activation_fn(
             activation=str(args.activation_fn)
@@ -84,7 +88,10 @@ class TransformerMutualAttentionDecoderLayer(nn.Module):
         # TODO  remove this once we update apex with the fix
         export = getattr(args, "char_inputs", False)
         self.self_attn1_layer_norm = LayerNorm(self.embed_dim, export=export)
-        self.self_attn2_layer_norm = LayerNorm(self.embed_dim, export=export)
+        if self.share_decoders:
+            self.self_attn2_layer_norm = self.self_attn1_layer_norm
+        else:
+            self.self_attn2_layer_norm = LayerNorm(self.embed_dim, export=export)
 
         if no_encoder_attn:
             self.encoder_attn1 = None
@@ -94,8 +101,12 @@ class TransformerMutualAttentionDecoderLayer(nn.Module):
         else:
             self.encoder_attn1 = self.build_encoder_attention(self.embed_dim, args)
             self.encoder_attn1_layer_norm = LayerNorm(self.embed_dim, export=export)
-            self.encoder_attn2 = self.build_encoder_attention(self.embed_dim, args)
-            self.encoder_attn2_layer_norm = LayerNorm(self.embed_dim, export=export)
+            if self.share_decoders:
+                self.encoder_attn2 = self.encoder_attn1
+                self.encoder_attn2_layer_norm = self.encoder_attn1_layer_norm
+            else:
+                self.encoder_attn2 = self.build_encoder_attention(self.embed_dim, args)
+                self.encoder_attn2_layer_norm = LayerNorm(self.embed_dim, export=export)
 
         if no_mutual_attn:
             self.mutual_attn1 = None
@@ -105,16 +116,16 @@ class TransformerMutualAttentionDecoderLayer(nn.Module):
         else:
             self.mutual_attn1 = self.build_mutual_attention(self.embed_dim, args)
             self.mutual_attn1_layer_norm = LayerNorm(self.embed_dim, export=export)
-            self.mutual_attn2 = self.build_mutual_attention(self.embed_dim, args)
-            self.mutual_attn2_layer_norm = LayerNorm(self.embed_dim, export=export)
+            if self.share_decoders:
+                self.mutual_attn2 = self.mutual_attn1
+                self.mutual_attn2_layer_norm = self.mutual_attn1_layer_norm
+            else:
+                self.mutual_attn2 = self.build_mutual_attention(self.embed_dim, args)
+                self.mutual_attn2_layer_norm = LayerNorm(self.embed_dim, export=export)
 
+        # fc1 refers to first ffn martrix, fc2 as for second ffn matrix
+        # _1 for first decoder, _2 for second decoder
         self.fc1_1 = self.build_fc1(
-            self.embed_dim,
-            args.decoder_ffn_embed_dim,
-            self.quant_noise,
-            self.quant_noise_block_size,
-        )
-        self.fc1_2 = self.build_fc1(
             self.embed_dim,
             args.decoder_ffn_embed_dim,
             self.quant_noise,
@@ -126,15 +137,26 @@ class TransformerMutualAttentionDecoderLayer(nn.Module):
             self.quant_noise,
             self.quant_noise_block_size,
         )
-        self.fc2_2 = self.build_fc2(
-            args.decoder_ffn_embed_dim,
-            self.embed_dim,
-            self.quant_noise,
-            self.quant_noise_block_size,
-        )
-
         self.final_layer_norm1 = LayerNorm(self.embed_dim, export=export)
-        self.final_layer_norm2 = LayerNorm(self.embed_dim, export=export)
+        if self.share_decoders:
+            self.fc1_2 = self.fc1_1
+            self.fc2_2 = self.fc2_1
+            self.final_layer_norm2 = self.final_layer_norm1
+        else:
+            self.fc1_2 = self.build_fc1(
+                self.embed_dim,
+                args.decoder_ffn_embed_dim,
+                self.quant_noise,
+                self.quant_noise_block_size,
+            )
+            self.fc2_2 = self.build_fc2(
+                args.decoder_ffn_embed_dim,
+                self.embed_dim,
+                self.quant_noise,
+                self.quant_noise_block_size,
+            )
+            self.final_layer_norm2 = LayerNorm(self.embed_dim, export=export)
+
         self.need_attn = True
 
         self.onnx_trace = False

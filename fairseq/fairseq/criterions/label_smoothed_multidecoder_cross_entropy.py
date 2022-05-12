@@ -32,6 +32,7 @@ class LabelSmoothedMultiDecoderCrossEntropyCriterion(FairseqCriterion):
         task,
         sentence_avg,
         label_smoothing,
+        loss_weight,
         ignore_prefix_size=0,
         report_accuracy=False,
     ):
@@ -40,6 +41,7 @@ class LabelSmoothedMultiDecoderCrossEntropyCriterion(FairseqCriterion):
         self.eps = label_smoothing
         self.ignore_prefix_size = ignore_prefix_size
         self.report_accuracy = report_accuracy
+        self.alpha = loss_weight
 
     @staticmethod
     def add_args(parser):
@@ -51,6 +53,8 @@ class LabelSmoothedMultiDecoderCrossEntropyCriterion(FairseqCriterion):
                             help='report accuracy metric')
         parser.add_argument('--ignore-prefix-size', default=0, type=int,
                             help='Ignore first N tokens')
+        parser.add_argument('--loss-weight', default=0.5, type=float, metavar='D',
+                            help='weight alpha for the weighted sum of loss, the weight is directly applied to the first decoder. 0.5 means balanced loss')
         # fmt: on
 
     def forward(self, model, sample, reduce=True):
@@ -73,8 +77,11 @@ class LabelSmoothedMultiDecoderCrossEntropyCriterion(FairseqCriterion):
             sample["target1"].size(0) 
             if self.sentence_avg else sample["ntokens"]
         )
-        loss = sum(losses)
-        nll_loss = sum(nll_losses)
+        # loss = sum(losses)
+        # nll_loss = sum(nll_losses)
+        # alpha * loss0 + (1 - alpha) * loss1
+        loss = 2 * (self.alpha * losses[0] + (1.0 - self.alpha) * losses[1])
+        nll_loss = 2 * (self.alpha * losses[0] + (1.0 - self.alpha) * losses[1])
 
         logging_output = {
             "loss": loss.data,

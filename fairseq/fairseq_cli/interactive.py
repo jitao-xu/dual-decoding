@@ -44,7 +44,7 @@ def buffered_read(input, buffer_size):
     buffer = []
     with fileinput.input(files=[input], openhook=fileinput.hook_encoded("utf-8")) as h:
         for src_str in h:
-            buffer.append(src_str.strip())
+            buffer.append(src_str.rstrip())
             if len(buffer) >= buffer_size:
                 yield buffer
                 buffer = []
