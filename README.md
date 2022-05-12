@@ -1,10 +1,14 @@
 # Dual Decoding
 
-Source code of paper:
+Source code of papers:
 
 [**One Source, Two Targets: Challenges and Rewards of Dual Decoding**](https://arxiv.org/abs/2109.10197)
 
 Jitao Xu and François Yvon
+
+**Joint Generation of Captions and Subtitles with Dual Decoding**
+
+Jitao Xu, François Buet, Josep Crego, Elise Bertin-Lemée, François Yvon
 
 ## Installation
 
@@ -79,6 +83,8 @@ To share the embedding matrices, several options are supported:
 - Share all embeddings including encoder input embedding: `--share-all-embeddings`.
 
 To deactivate decoder cross attention layer, set `--no-mutual-attention`. In this case, dual decoder model degrades to multi-task independent decoders model. The two decoders become independent. This can also be performed by changing the model architecture to `--arch multidecoder_transformer`.
+
+To share all parameters between the two decoders, use the option `--share-decoders`.
 
 ### Training with Prefix Tokens
 
